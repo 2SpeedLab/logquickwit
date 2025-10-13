@@ -1,0 +1,29 @@
+{{- if and .Values.graylog.enabled .Values.graylog.persistence.data.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "central-logging.fullname" . }}-graylog-data-pvc
+  labels:
+    {{- include "central-logging.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.graylog.persistence.data.accessMode }}
+  storageClassName: {{ .Values.graylog.persistence.data.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.graylog.persistence.data.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "central-logging.fullname" . }}-graylog-journal-pvc
+  labels:
+    {{- include "central-logging.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.graylog.persistence.journal.accessMode }}
+  storageClassName: {{ .Values.graylog.persistence.journal.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.graylog.persistence.journal.size }}
+{{- end }}

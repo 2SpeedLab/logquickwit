@@ -1,0 +1,15 @@
+{{- if and .Values.quickwit.enabled .Values.quickwit.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "central-logging.fullname" . }}-quickwit-pvc
+  labels:
+    {{- include "central-logging.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.quickwit.persistence.accessMode }}
+  storageClassName: {{ .Values.quickwit.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.quickwit.persistence.size }}
+{{- end }}

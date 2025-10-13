@@ -1,0 +1,42 @@
+{{- if .Values.graylog.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "central-logging.fullname" . }}-graylog
+  labels:
+    app: graylog
+    {{- include "central-logging.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.graylog.service.type }}
+  ports:
+    - port: {{ .Values.graylog.service.webPort }}
+      targetPort: 9000
+      protocol: TCP
+      name: web
+  {{- if .Values.graylog.inputs.syslog.tcp.enabled }}
+    - port: {{ .Values.graylog.inputs.syslog.tcp.port }}
+      targetPort: {{ .Values.graylog.inputs.syslog.tcp.port }}
+      protocol: TCP
+      name: syslog-tcp
+  {{- end }}
+  {{- if .Values.graylog.inputs.syslog.udp.enabled }}
+    - port: {{ .Values.graylog.inputs.syslog.udp.port }}
+      targetPort: {{ .Values.graylog.inputs.syslog.udp.port }}
+      protocol: UDP
+      name: syslog-udp
+  {{- end }}
+  {{- if .Values.graylog.inputs.gelf.tcp.enabled }}
+    - port: {{ .Values.graylog.inputs.gelf.tcp.port }}
+      targetPort: {{ .Values.graylog.inputs.gelf.tcp.port }}
+      protocol: TCP
+      name: gelf-tcp
+  {{- end }}
+  {{- if .Values.graylog.inputs.gelf.udp.enabled }}
+    - port: {{ .Values.graylog.inputs.gelf.udp.port }}
+      targetPort: {{ .Values.graylog.inputs.gelf.udp.port }}
+      protocol: UDP
+      name: gelf-udp
+  {{- end }}
+  selector:
+    app: graylog
+{{- end }}

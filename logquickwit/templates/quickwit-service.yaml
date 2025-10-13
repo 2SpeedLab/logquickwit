@@ -1,0 +1,18 @@
+{{- if .Values.quickwit.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "central-logging.fullname" . }}-quickwit
+  labels:
+    app: quickwit
+    {{- include "central-logging.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.quickwit.service.type }}
+  ports:
+    - port: {{ .Values.quickwit.service.port }}
+      targetPort: 7280
+      protocol: TCP
+      name: rest-api
+  selector:
+    app: quickwit
+{{- end }}

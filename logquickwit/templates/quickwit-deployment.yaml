@@ -1,0 +1,41 @@
+{{- if .Values.quickwit.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "central-logging.fullname" . }}-quickwit
+  labels:
+    app: quickwit
+    {{- include "central-logging.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.quickwit.replicaCount }}
+  selector:
+    matchLabels:
+      app: quickwit
+  template:
+    metadata:
+      labels:
+        app: quickwit
+    spec:
+      containers:
+        - name: quickwit
+          image: "{{ .Values.quickwit.image.repository }}:{{ .Values.quickwit.image.tag }}"
+          imagePullPolicy: {{ .Values.quickwit.image.pullPolicy }}
+          command: ["quickwit", "run"]
+          ports:
+            - containerPort: 7280
+              name: rest-api
+          env:
+        {{- range .Values.quickwit.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+        {{- end }}
+          volumeMounts:
+            - name: quickwit-data
+              mountPath: /quickwit/qwdata
+          resources:
+          {{- toYaml .Values.quickwit.resources | nindent 10 }}
+      volumes:
+        - name: quickwit-data
+          persistentVolumeClaim:
+            claimName: {{ include "central-logging.fullname" . }}-quickwit-pvc
+{{- end }}

@@ -1,0 +1,39 @@
+{{- if and .Values.graylog.enabled .Values.graylog.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "central-logging.fullname" . }}-graylog
+  labels:
+    {{- include "central-logging.labels" . | nindent 4 }}
+  {{- with .Values.graylog.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.graylog.ingress.className }}
+  {{- if .Values.graylog.ingress.tls }}
+  tls:
+    {{- range .Values.graylog.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.graylog.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "central-logging.fullname" $ }}-graylog
+                port:
+                  number: {{ $.Values.graylog.service.webPort }}
+          {{- end }}
+    {{- end }}
+{{- end }}
