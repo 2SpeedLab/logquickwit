@@ -1,6 +1,6 @@
 {{- if .Values.ingress.enabled -}}
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
   name: {{ include "logquickwit.fullname" . }}
   labels:
@@ -10,34 +10,244 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  {{- with .Values.ingress.className }}
-  ingressClassName: {{ . }}
-  {{- end }}
-  {{- if .Values.ingress.tls }}
-  tls:
-    {{- range .Values.ingress.tls }}
-    - hosts:
-        {{- range .hosts }}
-        - {{ . | quote }}
-        {{- end }}
-      secretName: {{ .secretName }}
+  parentRefs:
+    - name: {{ .Values.ingress.gatewayName | default "eg" }}
+      namespace: {{ .Values.ingress.gatewayNamespace | default "envoy-gateway-system" }}
+      {{- if .Values.ingress.sectionName }}
+      sectionName: {{ .Values.ingress.sectionName }}
+      {{- end }}
+  {{- if .Values.ingress.hosts }}
+  hostnames:
+    {{- range .Values.ingress.hosts }}
+    - {{ .host | quote }}
     {{- end }}
   {{- end }}
   rules:
     {{- range .Values.ingress.hosts }}
-    - host: {{ .host | quote }}
-      http:
-        paths:
-          {{- range .paths }}
-          - path: {{ .path }}
-            {{- with .pathType }}
-            pathType: {{ . }}
-            {{- end }}
-            backend:
-              service:
-                name: {{ include "logquickwit.fullname" $ }}
-                port:
-                  number: {{ $.Values.service.port }}
+    {{- range .paths }}
+    - matches:
+        - path:
+            type: {{ .pathType | default "PathPrefix" }}
+            value: {{ .path }}
+          {{- if .method }}
+          method: {{ .method }}
           {{- end }}
+          {{- if .headers }}
+          headers:
+            {{- range .headers }}
+            - name: {{ .name }}
+              value: {{ .value }}
+            {{- end }}
+          {{- end }}
+      {{- if .filters }}
+      filters:
+        {{- toYaml .filters | nindent 8 }}
+      {{- end }}
+      backendRefs:
+        - name: {{ include "logquickwit.fullname" $ }}
+          port: {{ $.Values.service.port }}
+          weight: {{ .weight | default 1 }}
     {{- end }}
+    {{- end }}
+---
+{{- if .Values.ingress.tls }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ include "logquickwit.fullname" . }}-gateway
+  labels:
+    {{- include "logquickwit.labels" . | nindent 4 }}
+spec:
+  gatewayClassName: {{ .Values.ingress.gatewayClassName | default "eg" }}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      {{- if .Values.ingress.redirectHttps }}
+      allowedRoutes:
+        namespaces:
+          from: Same
+      {{- end }}
+    - name: https
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: Same
+      tls:
+        mode: Terminate
+        certificateRefs:
+          {{- range .Values.ingress.tls }}
+          - kind: Secret
+            name: {{ .secretName }}
+            {{- if .namespace }}
+            namespace: {{ .namespace }}
+            {{- end }}
+          {{- end }}
+{{- end }}
+---
+{{- if .Values.ingress.redirectHttps }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "logquickwit.fullname" . }}-http-redirect
+  labels:
+    {{- include "logquickwit.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "logquickwit.fullname" . }}-gateway
+      sectionName: http
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+{{- end }}
+---
+{{- if .Values.ingress.rateLimit.enabled }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: {{ include "logquickwit.fullname" . }}-rate-limit
+  labels:
+    {{- include "logquickwit.labels" . | nindent 4 }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: {{ include "logquickwit.fullname" . }}
+  rateLimit:
+    type: {{ .Values.ingress.rateLimit.type | default "Global" }}
+    global:
+      rules:
+        - clientSelectors:
+            - headers:
+                - name: x-user-id
+                  type: Distinct
+          limit:
+            requests: {{ .Values.ingress.rateLimit.requests | default 100 }}
+            unit: {{ .Values.ingress.rateLimit.unit | default "Minute" }}
+{{- end }}
+---
+{{- if .Values.ingress.timeout.enabled }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: {{ include "logquickwit.fullname" . }}-timeout
+  labels:
+    {{- include "logquickwit.labels" . | nindent 4 }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: {{ include "logquickwit.fullname" . }}
+  timeout:
+    http:
+      requestTimeout: {{ .Values.ingress.timeout.request | default "60s" }}
+      connectionIdleTimeout: {{ .Values.ingress.timeout.idle | default "300s" }}
+{{- end }}
+---
+{{- if .Values.ingress.retry.enabled }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: {{ include "logquickwit.fullname" . }}-retry
+  labels:
+    {{- include "logquickwit.labels" . | nindent 4 }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: {{ include "logquickwit.fullname" . }}
+  retry:
+    numRetries: {{ .Values.ingress.retry.attempts | default 3 }}
+    perRetry:
+      timeout: {{ .Values.ingress.retry.perRetryTimeout | default "5s" }}
+      backOff:
+        baseInterval: {{ .Values.ingress.retry.baseInterval | default "1s" }}
+        maxInterval: {{ .Values.ingress.retry.maxInterval | default "10s" }}
+    retryOn:
+      httpStatusCodes:
+        {{- range .Values.ingress.retry.httpStatusCodes | default (list 502 503 504) }}
+        - {{ . }}
+        {{- end }}
+{{- end }}
+---
+{{- if .Values.ingress.cors.enabled }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ include "logquickwit.fullname" . }}-cors
+  labels:
+    {{- include "logquickwit.labels" . | nindent 4 }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: {{ include "logquickwit.fullname" . }}
+  cors:
+    allowOrigins:
+      {{- range .Values.ingress.cors.allowOrigins | default (list "*") }}
+      - {{ . | quote }}
+      {{- end }}
+    allowMethods:
+      {{- range .Values.ingress.cors.allowMethods | default (list "GET" "POST" "PUT" "DELETE" "OPTIONS") }}
+      - {{ . }}
+      {{- end }}
+    allowHeaders:
+      {{- range .Values.ingress.cors.allowHeaders | default (list "Content-Type" "Authorization") }}
+      - {{ . }}
+      {{- end }}
+    exposeHeaders:
+      {{- range .Values.ingress.cors.exposeHeaders | default (list "X-Custom-Header") }}
+      - {{ . }}
+      {{- end }}
+    maxAge: {{ .Values.ingress.cors.maxAge | default "24h" }}
+    allowCredentials: {{ .Values.ingress.cors.allowCredentials | default false }}
+{{- end }}
+---
+{{- if .Values.ingress.authentication.enabled }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ include "logquickwit.fullname" . }}-auth
+  labels:
+    {{- include "logquickwit.labels" . | nindent 4 }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: {{ include "logquickwit.fullname" . }}
+  {{- if eq .Values.ingress.authentication.type "jwt" }}
+  jwt:
+    providers:
+      - name: {{ .Values.ingress.authentication.jwt.providerName | default "jwt-provider" }}
+        issuer: {{ .Values.ingress.authentication.jwt.issuer | required "JWT issuer is required" }}
+        audiences:
+          {{- range .Values.ingress.authentication.jwt.audiences }}
+          - {{ . }}
+          {{- end }}
+        remoteJWKS:
+          uri: {{ .Values.ingress.authentication.jwt.jwksUri | required "JWKS URI is required" }}
+  {{- else if eq .Values.ingress.authentication.type "basic" }}
+  basicAuth:
+    users:
+      name: {{ .Values.ingress.authentication.basic.secretName | required "Basic auth secret name is required" }}
+  {{- else if eq .Values.ingress.authentication.type "oidc" }}
+  oidc:
+    provider:
+      issuer: {{ .Values.ingress.authentication.oidc.issuer | required "OIDC issuer is required" }}
+      authorizationEndpoint: {{ .Values.ingress.authentication.oidc.authorizationEndpoint }}
+      tokenEndpoint: {{ .Values.ingress.authentication.oidc.tokenEndpoint }}
+    clientID: {{ .Values.ingress.authentication.oidc.clientID | required "OIDC client ID is required" }}
+    clientSecret:
+      name: {{ .Values.ingress.authentication.oidc.clientSecretName | required "OIDC client secret name is required" }}
+    redirectURL: {{ .Values.ingress.authentication.oidc.redirectURL | required "OIDC redirect URL is required" }}
+    scopes:
+      {{- range .Values.ingress.authentication.oidc.scopes | default (list "openid" "profile" "email") }}
+      - {{ . }}
+      {{- end }}
+  {{- end }}
+{{- end }}
 {{- end }}

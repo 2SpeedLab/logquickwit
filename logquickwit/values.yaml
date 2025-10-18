@@ -1,13 +1,25 @@
 global:
   storageClass: ceph-rbd
 
+# Service Account
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
 mongodb:
   enabled: true
   image:
     repository: mongo
     tag: "6.0"
     pullPolicy: IfNotPresent
-  
+
+  replicaCount: 1
+
   resources:
     requests:
       memory: "512Mi"
@@ -15,26 +27,36 @@ mongodb:
     limits:
       memory: "2Gi"
       cpu: "1000m"
-  
+
   persistence:
     enabled: true
-    storageClass: ceph-rbd
-    size: 50Gi
+    storageClass: "ceph-rbd"  # Change to your Ceph storage class
+    size: 10Gi  # Start small for testing
     accessMode: ReadWriteOnce
 
+  service:
+    type: ClusterIP
+    port: 27017
+
+  # Authentication (optional for testing)
+  auth:
+    enabled: false  # Set to true for production
+    rootPassword: "12345TriBeo"
+    database: "graylog"
+
 quickwit:
-  enabled: true
+  enabled: false
   image:
     repository: quickwit/quickwit
     tag: "latest"
     pullPolicy: IfNotPresent
-  
+
   replicaCount: 1
-  
+
   service:
     type: ClusterIP
     port: 7280
-  
+
   resources:
     requests:
       memory: "1Gi"
@@ -42,45 +64,30 @@ quickwit:
     limits:
       memory: "4Gi"
       cpu: "2000m"
-  
+
   persistence:
     enabled: true
     storageClass: ceph-rbd
     size: 100Gi
     accessMode: ReadWriteOnce
-  
+
   env:
     - name: QW_ENABLE_JAEGER_EXPORTER
       value: "false"
 
 graylog:
-  enabled: true
+  enabled: false
   image:
     repository: graylog/graylog
     tag: "5.2"
     pullPolicy: IfNotPresent
-  
+
   replicaCount: 1
-  
+
   service:
     type: LoadBalancer
     webPort: 9000
 
-  ingress:
-    enabled: true
-    className: nginx
-    annotations:
-      cert-manager.io/cluster-issuer: letsencrypt-prod
-    hosts:
-      - host: graylog.example.com
-        paths:
-          - path: /
-            pathType: Prefix
-    tls:
-      - secretName: graylog-tls
-        hosts:
-          - graylog.example.com
-  
   # Input ports for log collection
   inputs:
     syslog:
@@ -97,7 +104,7 @@ graylog:
       udp:
         enabled: true
         port: 12201
-  
+
   resources:
     requests:
       memory: "2Gi"
@@ -105,7 +112,7 @@ graylog:
     limits:
       memory: "4Gi"
       cpu: "2000m"
-  
+
   persistence:
     data:
       enabled: true
@@ -125,3 +132,196 @@ graylog:
     rootUsername: "admin"
     httpExternalUri: "http://graylog.example.com/"
     rootTimezone: "UTC"
+
+# values.yaml for Envoy Gateway Ingress Configuration
+
+ingress:
+  enabled: false
+
+  # Gateway Configuration
+  gatewayName: "eg"  # Name of the existing Gateway (or will create new one)
+  gatewayNamespace: "envoy-gateway-system"  # Namespace where Gateway is deployed
+  gatewayClassName: "eg"  # GatewayClass name
+  sectionName: ""  # Optional: specific listener name on the Gateway
+
+  # Create a dedicated Gateway (set to true if you want a separate gateway)
+  createGateway: false
+
+  # Host Configuration
+  hosts:
+    - host: "graylog.example.com"
+      paths:
+        - path: /
+          pathType: PathPrefix
+          weight: 1  # Traffic weight for canary/blue-green deployments
+          # Optional: HTTP method matching
+          # method: GET
+          # Optional: Header matching
+          # headers:
+          #   - name: "X-Custom-Header"
+          #     value: "custom-value"
+          # Optional: Request filters
+          # filters:
+          #   - type: RequestHeaderModifier
+          #     requestHeaderModifier:
+          #       add:
+          #         - name: X-Custom-Header
+          #           value: custom-value
+
+    - host: "quickwit.example.com"
+      paths:
+        - path: /
+          pathType: PathPrefix
+
+  # TLS Configuration
+  tls:
+    - secretName: graylog-tls
+      hosts:
+        - graylog.example.com
+      # namespace: default  # Optional: if secret is in different namespace
+    - secretName: quickwit-tls
+      hosts:
+        - quickwit.example.com
+
+  # Redirect HTTP to HTTPS
+  redirectHttps: true
+
+  # Annotations (for compatibility, but less used in Gateway API)
+  annotations:
+  # cert-manager.io/cluster-issuer: letsencrypt-prod
+  # external-dns.alpha.kubernetes.io/hostname: graylog.example.com
+
+  # Rate Limiting
+  rateLimit:
+    enabled: false
+    type: "Global"  # or "Local"
+    requests: 100
+    unit: "Minute"  # Second, Minute, Hour, Day
+
+  # Timeout Configuration
+  timeout:
+    enabled: true
+    request: "60s"
+    idle: "300s"
+
+  # Retry Configuration
+  retry:
+    enabled: true
+    attempts: 3
+    perRetryTimeout: "5s"
+    baseInterval: "1s"
+    maxInterval: "10s"
+    httpStatusCodes:
+      - 502
+      - 503
+      - 504
+
+  # CORS Configuration
+  cors:
+    enabled: false
+    allowOrigins:
+      - "https://example.com"
+      - "https://*.example.com"
+    allowMethods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+      - PATCH
+    allowHeaders:
+      - Content-Type
+      - Authorization
+      - X-Requested-With
+    exposeHeaders:
+      - X-Custom-Header
+    maxAge: "24h"
+    allowCredentials: true
+
+  # Authentication Configuration
+  authentication:
+    enabled: false
+    type: "jwt"  # Options: jwt, basic, oidc
+
+    # JWT Authentication
+    jwt:
+      providerName: "jwt-provider"
+      issuer: "https://auth.example.com"
+      audiences:
+        - "my-api"
+      jwksUri: "https://auth.example.com/.well-known/jwks.json"
+
+    # Basic Authentication
+    basic:
+      secretName: "basic-auth-secret"
+      # Create secret with: kubectl create secret generic basic-auth-secret --from-literal=users='user1:$apr1$...'
+
+    # OIDC Authentication
+    oidc:
+      issuer: "https://accounts.google.com"
+      authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth"
+      tokenEndpoint: "https://oauth2.googleapis.com/token"
+      clientID: "your-client-id"
+      clientSecretName: "oidc-client-secret"
+      redirectURL: "https://graylog.example.com/oauth2/callback"
+      scopes:
+        - openid
+        - profile
+        - email
+
+  # Circuit Breaking (Load Balancing)
+  loadBalancing:
+    enabled: false
+    consistentHash:
+      type: "Header"  # Options: Header, Cookie, SourceIP
+      headerName: "X-User-ID"
+
+  # Health Checks
+  healthCheck:
+    enabled: false
+    path: "/health"
+    interval: "10s"
+    timeout: "5s"
+    unhealthyThreshold: 3
+    healthyThreshold: 2
+
+  # Custom Request/Response Headers
+  headers:
+    request:
+      add: {}
+      # X-Custom-Header: "custom-value"
+      remove: []
+      # - X-Remove-This
+    response:
+      add: {}
+      # X-Response-Header: "value"
+      remove: []
+      # - Server
+
+# Service Configuration (referenced by HTTPRoute)
+service:
+  type: ClusterIP
+  port: 9000  # Graylog web interface port
+  targetPort: 9000
+
+# Additional service ports for log ingestion
+additionalPorts:
+  - name: syslog-tcp
+    port: 1514
+    targetPort: 1514
+    protocol: TCP
+  - name: syslog-udp
+    port: 1514
+    targetPort: 1514
+    protocol: UDP
+  - name: gelf-tcp
+    port: 12201
+    targetPort: 12201
+    protocol: TCP
+  - name: gelf-udp
+    port: 12201
+    targetPort: 12201
+    protocol: UDP
+
+autoscaling:
+  enabled: false
