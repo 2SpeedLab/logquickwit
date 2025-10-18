@@ -1,6 +1,3 @@
-global:
-  storageClass: ceph-rbd
-
 # Service Account
 serviceAccount:
   # Specifies whether a service account should be created

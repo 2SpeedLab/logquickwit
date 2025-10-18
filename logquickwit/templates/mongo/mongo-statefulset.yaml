@@ -1,13 +1,15 @@
+# templates/mongodb/statefulset.yaml
 {{- if .Values.mongodb.enabled }}
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "logquickwit.fullname" . }}-mongodb
   labels:
     app: mongodb
     {{- include "logquickwit.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.mongodb.replicaCount | default 1 }}
+  serviceName: {{ include "logquickwit.fullname" . }}-mongodb-headless
+  replicas: {{ .Values.mongodb.replicaCount }}
   selector:
     matchLabels:
       app: mongodb
@@ -18,6 +20,11 @@ spec:
         app: mongodb
         {{- include "logquickwit.selectorLabels" . | nindent 8 }}
     spec:
+      serviceAccountName: {{ include "logquickwit.serviceAccountName" . }}
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+        runAsNonRoot: true
       containers:
         - name: mongodb
           image: "{{ .Values.mongodb.image.repository }}:{{ .Values.mongodb.image.tag }}"
@@ -25,24 +32,12 @@ spec:
           ports:
             - containerPort: 27017
               name: mongodb
-              protocol: TCP
-        {{- if .Values.mongodb.auth.enabled }}
           env:
-            - name: MONGO_INITDB_ROOT_USERNAME
-              value: "root"
-            - name: MONGO_INITDB_ROOT_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "logquickwit.fullname" . }}-mongodb-secret
-                  key: mongodb-root-password
             - name: MONGO_INITDB_DATABASE
-              value: {{ .Values.mongodb.auth.database | quote }}
-        {{- end }}
+              value: {{ .Values.mongodb.database | default "graylog" | quote }}
           volumeMounts:
-            - name: mongodb-data
+            - name: data
               mountPath: /data/db
-            - name: mongodb-config
-              mountPath: /data/configdb
           resources:
           {{- toYaml .Values.mongodb.resources | nindent 10 }}
           livenessProbe:
@@ -65,11 +60,17 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 6
-      volumes:
-        - name: mongodb-data
-          persistentVolumeClaim:
-            claimName: {{ include "logquickwit.fullname" . }}-mongodb-data-pvc
-        - name: mongodb-config
-          persistentVolumeClaim:
-            claimName: {{ include "logquickwit.fullname" . }}-mongodb-config-pvc
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app: mongodb
+        {{- include "logquickwit.labels" . | nindent 8 }}
+      spec:
+        accessModes:
+          - {{ .Values.mongodb.persistence.accessMode }}
+        storageClassName: {{ .Values.mongodb.persistence.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.mongodb.persistence.size }}
 {{- end }}
